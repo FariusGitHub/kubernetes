@@ -233,8 +233,45 @@ NAME
 docker-desktop
 ```
 ## Watchs and Logs
-
+Let's see another feature from kubectl called --watch. If we use K9S this feature already there. Let's see how the pod was created and deleted while we can see the progress like below.
 
 ![](/images/05-image03.gif)
 Figure 2: Comparable Screen from K9S and Traditional terminal with kubectl get pods --watch -v 6  
-<br><br>
+<br>
+
+Similarly we can also watch the deployment. We can use hello-world.yaml for example as one of a deployment like below
+
+```txt
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: hello-world
+  name: hello-world
+  namespace: default
+spec:
+  replicas: 5
+  selector:
+    matchLabels:
+      app: hello-world
+  template:
+    metadata:
+      labels:
+        app: hello-world
+    spec:
+      containers:
+      - image: gcr.io/google-samples/hello-app:1.0
+        name: hello-world
+        ports:
+        - containerPort: 8080
+```
+
+![](/images/05-image04.gif)
+Figure 3: Comparable Screen from K9S and Traditional terminal with kubectl get deployment --watch -v 6  
+<br>
+
+For Logs, the `--watch` flag is not available for logs in Kubernetes. The `--watch` flag is used to continuously monitor changes in resources like pods, services, or deployments. However, for logs, you can use the `kubectl logs` command to retrieve the logs of a specific pod. By default, it will show the most recent logs, but you can use the `-f` flag to follow the logs in real-time. 
+
+![](/images/05-image05.gif)
+Figure 4: Logs command in kubectl does not have --watch, it has to logs very specific pod by its name  
+<br>
