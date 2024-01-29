@@ -586,3 +586,782 @@ From the other terminal we could monitor every 10 seconds increment like
 ```txt
 curl http://localhost:8080
 ```
+<br><br>
+
+# CONTEXT, USERNAME, CLUSTER
+Let's try to create a new context based on the same cluster docker-desktop and username also docker-desktop. <br>
+
+Currently we have only one context and one cluster as follow
+
+```txt
+kubectl config get-contexts
+CURRENT   NAME             CLUSTER          AUTHINFO         NAMESPACE
+*         docker-desktop   docker-desktop   docker-desktop   
+```
+Or in K9s it would looks like below
+```txt
+ Context: docker-desktop ✏️                         <0> all       <a>      Attach     <l>       Logs            <f> Show PortForward                           ____  __.________        
+ Cluster: docker-desktop                           <1> default   <ctrl-d> Delete     <p>       Logs Previous   <t> Transfer                                  |    |/ _/   __   \______ 
+ User:    docker-desktop                                         <d>      Describe   <shift-f> Port-Forward    <y> YAML                                      |      < \____    /  ___/ 
+ K9s Rev: v0.31.7                                                <e>      Edit       <z>       Sanitize                                                      |    |  \   /    /\___ \  
+ K8s Rev: v1.28.2                                                <?>      Help       <s>       Shell                                                         |____|__ \ /____//____  > 
+ CPU:     n/a                                                    <ctrl-k> Kill       <n>       Show Node                                                             \/            \/  
+ MEM:     n/a                                                                                                                                                                          
+┌───────────────────────────────────────────────────────────────────────────────── Pods(default)[0] ──────────────────────────────────────────────────────────────────────────────────┐
+│ NAME↑                  PF                  READY                  STATUS                                   RESTARTS IP                  NODE                  AGE                   │
+│                                                                                                                                                                                     │
+│                                                                                                                                                                                     │
+│                                                                                                                                                                                     │
+└─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  <pod>                                                                       
+```
+Let's see existing username like below
+
+```txt
+kubectl config view --minify -o jsonpath='{.users[].name}'
+docker-desktop
+```
+Herewith how we make a new context named new-context <br>
+with the same username docker-desktop, the same cluster docker-desktop<br>
+and switch to it as a default context (shown with *)
+
+```txt
+kubectl config set-context new-context --cluster=docker-desktop --user=docker-desktop --namespace=default
+Context "new-context" created.
+
+kubectl config use-context new-context
+Switched to context "new-context".
+
+kubectl config get-contexts
+CURRENT   NAME             CLUSTER          AUTHINFO         NAMESPACE
+          docker-desktop   docker-desktop   docker-desktop   
+*         new-context      docker-desktop   docker-desktop   default
+```
+
+
+When we create a pod like below on the other terminal and press ":" on K9S screen "context new-context"<br>
+The combined screen should look like below. <br>
+As we shared the same username and cluster the same pod will be shown as well in docker-desktop context.
+
+```txt
+kubectl create -f pod.yaml
+pod/hello-world-pod created
+
+ Context: new-context ✏️                            <0> all       <a>      Attach     <l>       Logs            <f> Show PortForward                           ____  __.________        
+ Cluster: docker-desktop                           <1> default   <ctrl-d> Delete     <p>       Logs Previous   <t> Transfer                                  |    |/ _/   __   \______ 
+ User:    docker-desktop                                         <d>      Describe   <shift-f> Port-Forward    <y> YAML                                      |      < \____    /  ___/ 
+ K9s Rev: v0.31.7                                                <e>      Edit       <z>       Sanitize                                                      |    |  \   /    /\___ \  
+ K8s Rev: v1.28.2                                                <?>      Help       <s>       Shell                                                         |____|__ \ /____//____  > 
+ CPU:     n/a                                                    <ctrl-k> Kill       <n>       Show Node                                                             \/            \/  
+ MEM:     n/a                                                                                                                                                                          
+┌───────────────────────────────────────────────────────────────────────────────── Pods(default)[0] ──────────────────────────────────────────────────────────────────────────────────┐
+│ NAME↑                  PF                  READY                  STATUS                                   RESTARTS IP                  NODE                  AGE                   │
+│ hello-world-pod        ●                   1/1                    Running                                  0        10.1.1.125          docker-desktop                              │
+└─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  <pod>       
+
+```
+
+## STATIC PODS
+I will not be able to show an exact demo here as I have a super simple kubectl version that does not have /var/lib/kubelet/config.yaml or /etc/kubernetes/manifests folder. But the idea is showing you an untouchable pod if the yaml file was located in staticPod folder. <br>
+
+If you have the right kubectl version <br>
+/var/lib/kubelet/config.yaml is normally stated <br>
+staticPodPath: /etc/kubernetes/manifests
+
+Says you have a yaml file called test.yaml. <br>
+When you do
+```txt
+kubectl create -f test.yaml
+```
+and move that yaml file into 
+```txt
+sudo cp test.yaml /etc/kubernetes/manifests
+```
+Assuming the pod from above test.yaml was named hello-world, see what happen if you do below
+```txt
+kubectl delete pod hello-world
+```
+It is very likely this pod will be re-created once a deletion attempt was initiated.
+<br> <br>
+
+## INIT CONTAINER
+In this section we will go through some initiation process neeed such as to install a database. If this pod is not available, subsequent pod will not work, for example before an application can be launched we need to extract some source data unless the app will be meaningless.
+
+Let's see below situation from init-containers.yaml
+
+```txt
+apiVersion: v1
+kind: Pod
+metadata:
+  name: init-containers
+spec:
+  initContainers:
+  - name: init-service
+    image: ubuntu
+    command: ['sh', '-c', "echo waiting for service; sleep 2"]
+  - name: init-database
+    image: ubuntu
+    command: ['sh', '-c', "echo waiting for database; sleep 2"]
+  containers:
+  - name: app-container
+    image: nginx
+```
+
+If you do kubectl describe pods init-containers and go the Events description down below<br>
+you will normally see below event happened in sequence. Pod was created and status is running.  
+  Type    |Reason     |Age    |From               |Message
+  ----    |------     |----   |----               |-------
+  Normal  |Scheduled  |2m31s  |default-scheduler  |Successfully assigned default/init-containers to docker-desktop
+  Normal  |Pulling    |2m29s  |kubelet            |Pulling image "ubuntu"
+  Normal  |Pulled     |2m28s  |kubelet            |Successfully pulled image "ubuntu" in 1.214s (1.214s including waiting)
+  Normal  |Created    |2m27s  |kubelet            |Created container init-service
+  Normal  |Started    |2m26s  |kubelet            |Started container init-service
+  Normal  |Pulling    |2m24s  |kubelet            |Pulling image "ubuntu"
+  Normal  |Pulled     |2m23s  |kubelet            |Successfully pulled image "ubuntu" in 1.064s (1.064s including waiting)
+  Normal  |Created    |2m22s  |kubelet            |Created container init-database
+  Normal  |Started    |2m22s  |kubelet            |Started container init-database
+  Normal  |Pulling    |2m18s  |kubelet            |Pulling image "nginx"
+  Normal  |Pulled     |2m17s  |kubelet            |Successfully pulled image "nginx" in 1.354s (1.354s including waiting)
+  Normal  |Created    |2m16s  |kubelet            |Created container app-container
+  Normal  |Started    |2m16s  |kubelet            |Started container app-container
+
+### TIPS
+Normally this command below will create a pod for you regardless there is an error or not
+```txt
+kubectl create -f init-containers.yaml
+```
+But this command will show you an error if there is an error regardless at pod creation
+```txt
+kubectl apply -f init-containers.yaml
+```
+To encounter subsequent error, we need to fix yaml file, delete previous pod and apply it again
+```txt
+nano init-containers                     # fix the syntax
+kubectl delete pods init-containers      # delete previous pod to avoid confusion
+kubectl apply -f init-containers.yaml    # recreate pod with apply or create command
+```
+<br>
+
+Let's see the flip side when there is an error in init-containers.yaml
+  Type     |Reason     |Age                |From               |Message
+  ----     |------     |----               |----               |-------
+  Normal   |Scheduled  |46s                |default-scheduler  |Successfully assigned default/init-containers to docker-desktop
+  Normal   |Pulled     |43s                |kubelet            |Successfully pulled image "ubuntu" in 1.171s (1.171s including waiting)
+  Normal   |Pulled     |40s                |kubelet            |Successfully pulled image "ubuntu" in 1.062s (1.062s including waiting)
+  Normal   |Pulling    |28s (x3 over 44s)  |kubelet            |Pulling image "ubuntu"
+  Normal   |Pulled     |27s                |kubelet            |Successfully pulled image "ubuntu" in 1.066s (1.066s including waiting)
+  Normal   |Created    |26s (x3 over 42s)  |kubelet            |Created container init-service
+  Warning  |Failed     |26s (x3 over 42s)  |kubelet            |Error: failed to start container "init-service": Error response from daemon: failed to create task for container: failed to create shim task: OCI runtime create failed: runc create failed: unable to start container process: exec: "": executable file not found in $PATH: unknown
+  Warning  |BackOff    |9s (x3 over 24s)   |kubelet            |Back-off restarting failed container init-service in pod init-containers_default(a4fd0f3b-59fc-4d88-825a-412ddbabf082)
+
+When you run kubectl get pods commands, herewith the display for those two scenarios
+
+```txt
+kubectl get pods
+NAME              READY   STATUS                  RESTARTS     
+init-containers   0/1     running                 0    
+```
+
+```txt
+kubectl get pods
+NAME              READY   STATUS                  RESTARTS     
+init-containers   0/1     Init:CrashLoopBackOff   2    
+```
+
+## HEALTH PROBE
+For the same purpose as above, some people can use init containers and some use health probe.
+Herewith some comparison of the two.
+
+| Feature | Health Probe | Init Containers |
+|---------|--------------|----------------|
+| Purpose | To check the health of a container and determine if it should receive traffic or be restarted | To perform initialization tasks before the main container starts |
+| Execution | Periodically sends requests to a specified endpoint within the container and checks the response | Runs and completes before the main container starts |
+| Failure Handling | If a health probe fails, the container is considered unhealthy and may be restarted or replaced | If an init container fails, the pod will not start and will remain in a pending state |
+| Dependencies | Can depend on the container's readiness probe to determine if it should receive traffic | Can depend on other init containers to complete before it starts |
+| Configuration | Configured using the readinessProbe and livenessProbe fields in the pod or container definition | Configured as a separate container within the pod's specification |
+| Use Cases | Used to ensure that containers are healthy and ready to receive traffic | Used to perform tasks such as database initialization, downloading configuration files, or setting up shared volumes |
+| Ordering | Health probes do not have a specific order and can run concurrently with other containers | Init containers are executed in order, with each init container waiting for the previous one to complete before starting |
+| Restart Policy | Health probes can trigger container restarts based on their failure | Init containers do not trigger container restarts |
+| Resource Usage | Health probes consume minimal resources as they are lightweight checks | Init containers can consume resources depending on the tasks they perform |
+| Logging | Health probe results can be logged for monitoring and troubleshooting purposes | Init container logs can be used to track the initialization process and identify any issues |
+
+Take a look at below container-probes.yaml below
+```txt
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hello-world
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hello-world
+  template:
+    metadata:
+      labels:
+        app: hello-world
+    spec:
+      containers:
+      - name: hello-world
+        image: psk8s.azurecr.io/hello-app:1.0
+        ports:
+        - containerPort: 8080
+        livenessProbe:
+          tcpSocket:
+            port: 8081
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8081
+          initialDelaySeconds: 10
+          periodSeconds: 5
+```
+
+As you can see Health probes using child containers
+  - livenessProbe
+  - readinessProbe
+
+
+| Probe Type | Purpose | Action on Failure |
+|------------|---------|------------------|
+| Liveness   | Checks if the container is running and responsive | Restart the container |
+| Readiness  | Checks if the container is ready to receive traffic | Temporarily remove the container from the service's load balancer |
+|------------|---------|------------------|
+
+From the Events of kubectl describe pod would be normally like
+
+  Type    |Reason     |Age   |From               |Message
+  ----    |------     |----  |----               |-------
+  Normal  |Scheduled  |19s   |default-scheduler  |Successfully assigned default/hello-world-596f8db57-bmdb9 to docker-desktop
+  Normal  |Pulling    |17s   |kubelet            |Pulling image "psk8s.azurecr.io/hello-app:1.0"
+  Normal  |Pulled     |11s   |kubelet            |Successfully pulled image "psk8s.azurecr.io/hello-app:1.0" in 5.913s (5.914s including waiting)
+  Normal  |Created    |10s   |kubelet            |Created container hello-world
+  Normal  |Started    |10s   |kubelet            |Started container hello-world
+
+In case if an error occured, such as a security group not opening certain port
+
+  Type     |Reason     |Age   |From               |Message
+  ----     |------     |----  |----               |-------
+  Normal   |Scheduled  |19s   |default-scheduler  |Successfully assigned default/hello-world2-67d9fc96bc-ct9k6 to docker-desktop
+  Normal   |Pulled     |16s   |kubelet            |Container image "psk8s.azurecr.io/hello-app:1.0" already present on machine
+  Normal   |Created    |16s   |kubelet            |Created container hello-world2
+  Normal   |Started    |15s   |kubelet            |Started container hello-world2
+  Warning  |Unhealthy  |3s    |kubelet            |Readiness probe failed: Get "http://10.1.1.151:8081/": dial tcp 10.1.1.151:8081: connect: connection refused
+  Warning  |Unhealthy  |3s    |kubelet            |Liveness probe failed: dial tcp 10.1.1.151:8081: connect: connection refused
+
+In above case, the port is still running although it is not functioning. <br>
+In case we do not want this confusion, perhaps we can choose init containers.
+
+<br><br>
+
+# K8S DEPLOYMENT BASICS
+As we know a kubernetes is a nanny of pods. <br>
+
+## IMPERATIVE WAY TO SCALE
+Herewith is an example of calling a generic image from Google.
+
+```txt
+kubectl create deployment nginx --image=nginx:latest
+deployment.apps/nginx created
+
+kubectl get pods,deploy
+NAME                                       READY   STATUS             RESTARTS   AGE
+pod/nginx-56fcf95486-rs59b                 1/1     Running            0          2m13s
+
+NAME                                   READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/nginx                  1/1     1            1           2m13s
+
+```
+
+Look below exercise attempting to delete a pod, in this case nginx-56fcf95486-rs59b.<br>
+As soon as this pod was deleted, another one came out (-x5j74 replaced -rs59b). <br>
+It sounds like a same technique to preserve pod deletion in Static Pod discussion above.<br>
+
+```txt
+kubectl get pods,deploy
+NAME                         READY   STATUS    RESTARTS   AGE
+pod/nginx-56fcf95486-rs59b   1/1     Running   0          3h9m
+
+NAME                    READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/nginx   1/1     1            1           3h9m
+
+kubectl delete pod nginx-56fcf95486-rs59b
+pod "nginx-56fcf95486-rs59b" deleted
+
+kubectl get pods,deploy
+NAME                         READY   STATUS              RESTARTS   AGE
+pod/nginx-56fcf95486-x5j74   0/1     ContainerCreating   0          7s
+
+NAME                    READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/nginx   0/1     1            0           3h12m
+```
+In this case the middle name of the pod 56fcf95486 was remain the same.
+This id also can be found when we do
+```txt
+kubectl describe deploy nginx
+```
+and take a look at NewReplicaSet, where we can find the same information.
+```txt
+NewReplicaSet:   nginx-56fcf95486 (1/1 replicas created)
+```
+
+Let's try to populate the same deployment with more replicas like below.<br>
+Also see the same attempt to delete one of the pod and same thing happened.
+```txt
+kubectl create deployment nginx --image=nginx:latest --replicas=5
+deployment.apps/nginx created
+
+kubectl get pods
+NAME                         READY   STATUS    RESTARTS   AGE
+pod/nginx-56fcf95486-4mt5w   1/1     Running   0          9m47s
+pod/nginx-56fcf95486-7kpxx   1/1     Running   0          9m47s
+pod/nginx-56fcf95486-85c4x   1/1     Running   0          9m47s
+pod/nginx-56fcf95486-qnzp2   1/1     Running   0          9m47s
+pod/nginx-56fcf95486-xnttn   1/1     Running   0          9m47s
+
+kubectl delete pod nginx-56fcf95486-xnttn
+pod "nginx-56fcf95486-xnttn" deleted
+
+kubectl get pods
+NAME                         READY   STATUS    RESTARTS   AGE
+pod/nginx-56fcf95486-4mt5w   1/1     Running   0          10m
+pod/nginx-56fcf95486-7kpxx   1/1     Running   0          10m
+pod/nginx-56fcf95486-85c4x   1/1     Running   0          10m
+pod/nginx-56fcf95486-qnzp2   1/1     Running   0          10m
+pod/nginx-56fcf95486-rhj8h   1/1     Running   0          8s
+```
+## USING MANIFEST TO SCALE
+The declarative style is based on the use of manifests (YAML files). Compared to imperative, this approach makes it easy to put our deployment manifests into source control, increasing their reusability and maintenance.
+
+Although it might not be related, pipeline and freestyle approach to build CI/CD in Jenkins night be comparable to
+imperative and declarative approach to build pods in Kubernetes in term of limited to more flexible of configuration. Although in Jenkins pipeline style (less flexible way) is more popular and in Kubernetes it is declarative one (more flexible) that is more popular.
+
+![](/images/05-image08.png)<br>
+Figure 7: Creating Deployments Declaratively  
+<br>
+
+Let's see different way using manifest using the same hello-world.yaml
+```txt
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: hello-world
+  name: hello-world
+  namespace: default
+spec:
+  replicas: 5
+  selector:
+    matchLabels:
+      app: hello-world
+  template:
+    metadata:
+      labels:
+        app: hello-world
+    spec:
+      containers:
+      - image: gcr.io/google-samples/hello-app:1.0
+        name: hello-world
+        ports:
+        - containerPort: 8080
+```
+### Label
+Let's see the removing and editing label to one of the pod like below.<br>
+When deployment was deleted, pod with edited label won't be removed.
+
+```txt
+kubectl get pods --show-labels
+NAME                     READY   STATUS    RESTARTS   AGE   LABELS
+nginx-56fcf95486-4mt5w   1/1     Running   0          25m   app=nginx,pod-template-hash=56fcf95486
+nginx-56fcf95486-7kpxx   1/1     Running   0          25m   app=nginx,pod-template-hash=56fcf95486
+nginx-56fcf95486-85c4x   1/1     Running   0          25m   app=nginx,pod-template-hash=56fcf95486
+nginx-56fcf95486-qnzp2   1/1     Running   0          25m   app=nginx,pod-template-hash=56fcf95486
+nginx-56fcf95486-rhj8h   1/1     Running   0          15m   app=nginx,pod-template-hash=56fcf95486
+
+kubectl label pod nginx-56fcf95486-4mt5w app-
+pod/nginx-56fcf95486-4mt5w unlabeled
+
+kubectl label --overwrite pod nginx-56fcf95486-4mt5w workload=staging
+pod/nginx-56fcf95486-4mt5w labeled
+
+kubectl get pods --show-labels
+NAME                     READY   STATUS    RESTARTS   AGE   LABELS
+nginx-56fcf95486-4mt5w   1/1     Running   0          35m   pod-template-hash=56fcf95486,workload=staging
+nginx-56fcf95486-7kpxx   1/1     Running   0          35m   app=nginx,pod-template-hash=56fcf95486
+nginx-56fcf95486-85c4x   1/1     Running   0          35m   app=nginx,pod-template-hash=56fcf95486
+nginx-56fcf95486-mh2p5   1/1     Running   0          29s   app=nginx,pod-template-hash=56fcf95486
+nginx-56fcf95486-qnzp2   1/1     Running   0          35m   app=nginx,pod-template-hash=56fcf95486
+nginx-56fcf95486-rhj8h   1/1     Running   0          24m   app=nginx,pod-template-hash=56fcf95486
+
+kubectl delete deployment nginx
+deployment.apps "nginx" deleted
+
+kubectl get pods
+NAME                     READY   STATUS    RESTARTS   AGE
+nginx-56fcf95486-4mt5w   1/1     Running   0          39m
+```
+
+Let's change the hello-world.yaml having replicas=2 instead.<br>
+Previous left over pod was considered as 1 replica and the new one coming with standard label.
+```txt
+nano hello-world.yaml # changing replicas=2 from replicas=5
+
+kubectl create deployment nginx --image=nginx:latest
+deployment.apps/nginx created
+
+kubectl get pods --show-labels
+NAME                     READY   STATUS    RESTARTS   AGE   LABELS
+nginx-56fcf95486-4mt5w   1/1     Running   0          46m   pod-template-hash=56fcf95486,workload=staging
+nginx-56fcf95486-5rjz4   1/1     Running   0          7s    app=nginx,pod-template-hash=56fcf95486
+```
+
+Changing the label is the easiest way to isolate the pod for troubleshoot.
+
+### Pod, ReplicaSet and Deployment
+In fact it is ReplicaSet acting as the Pod nanny, not Deployment.
+
+![](/images/05-image07.png)
+Figure 8: ReplicaSet is the one that actually managing the pods  
+<br>
+
+```txt
+kubectl get all -l app=nginx
+NAME                         READY   STATUS    RESTARTS   
+pod/nginx-56fcf95486-5rjz4   1/1     Running   0          
+
+NAME                    READY   UP-TO-DATE   AVAILABLE   
+deployment.apps/nginx   1/1     1            1           
+
+NAME                               DESIRED   CURRENT   READY   
+replicaset.apps/nginx-56fcf95486   1         1         1      
+
+
+
+kubectl get pod,deploy,rs
+NAME                         READY   STATUS    RESTARTS   
+pod/nginx-56fcf95486-4mt5w   1/1     Running   0          
+pod/nginx-56fcf95486-5rjz4   1/1     Running   0          
+
+NAME                    READY   UP-TO-DATE   AVAILABLE   
+deployment.apps/nginx   1/1     1            1           
+
+NAME                               DESIRED   CURRENT   READY   
+replicaset.apps/nginx-56fcf95486   1         1         1      
+```
+
+### Avoiding Down Time During Upgrade
+
+Let's take another scenario with deployment-manifest.yaml file below where we will save it into deployment.yaml
+
+```txt
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+ labels:
+   app: hello-world
+ name: hello-world-deployment
+ namespace: default
+spec:
+ replicas: 5
+ selector:
+  matchLabels:
+    app: hello-world
+ template:
+  metadata:
+   labels:
+     app: hello-world
+  spec:
+   containers:
+   - image: gcr.io/google-samples/hello-app:1.0
+     name: hello-world-container
+     ports:
+     - containerPort: 8080
+```
+
+Take a look at below process, see how the pods were replaced staggeringly to avoid downtime
+
+```txt
+kubectl create -f deployment.yaml
+deployment.apps/hello-world-deployment created
+
+kubectl describe deployment hello-world
+...
+Events:
+  Type    Reason             Age   From                   Message
+  ----    ------             ----  ----                   -------
+  Normal  ScalingReplicaSet  82s   deployment-controller  Scaled up replica set hello-world-deployment-75554c97db to 5
+
+nano deployment.yaml   # here we simply change the image from V1 to V2
+
+kubectl apply -f deployment.yaml
+deployment.apps/hello-world-deployment configured
+
+kubectl describe deployment hello-world
+...
+Events:
+  Type    Reason             Age    From                   Message
+  ----    ------             ----   ----                   -------
+  Normal  ScalingReplicaSet  4m53s  deployment-controller  Scaled up replica set hello-world-deployment-75554c97db to 5
+  Normal  ScalingReplicaSet  3m3s   deployment-controller  Scaled up replica set hello-world-deployment-7bd6455957 to 2
+  Normal  ScalingReplicaSet  3m3s   deployment-controller  Scaled down replica set hello-world-deployment-75554c97db to 4 from 5
+  Normal  ScalingReplicaSet  3m2s   deployment-controller  Scaled up replica set hello-world-deployment-7bd6455957 to 3 from 2
+  Normal  ScalingReplicaSet  2m48s  deployment-controller  Scaled down replica set hello-world-deployment-75554c97db to 3 from 4
+  Normal  ScalingReplicaSet  2m48s  deployment-controller  Scaled up replica set hello-world-deployment-7bd6455957 to 4 from 3
+  Normal  ScalingReplicaSet  2m46s  deployment-controller  Scaled down replica set hello-world-deployment-75554c97db to 2 from 3
+  Normal  ScalingReplicaSet  2m45s  deployment-controller  Scaled up replica set hello-world-deployment-7bd6455957 to 5 from 4
+  Normal  ScalingReplicaSet  2m44s  deployment-controller  Scaled down replica set hello-world-deployment-75554c97db to 1 from 2
+  Normal  ScalingReplicaSet  2m40s  deployment-controller  (combined from similar events): Scaled down replica set hello-world-deployment-75554c97db to 0 from 1
+```
+
+In summary this is what the above message tell us in 8 different stages.<br>
+At any given time there would be six (replicas=5 + 1 more to avoid down time = 6).
+If you use K9S you could see live how older pods are gradually removed from five to zero and new pods are gradually created from zero to five.
+
+```txt
+step 1 & 2
+              Scaled up   new replica set from 1 to 2 
+              Scaled down old replica set from 5 to 4 
+                                              ---+ ---+
+                                              6    6
+step 3 & 4
+              Scaled up   new replica set from 2 to 3 
+              Scaled down old replica set from 4 to 3 
+                                              ---+ ---+
+                                              6    6
+step 5 & 6
+              Scaled up   new replica set from 3 to 4 
+              Scaled down old replica set from 3 to 2 
+                                              ---+ ---+
+                                              6    6
+step 7 & 8
+              Scaled up   new replica set from 4 to 5 
+              Scaled down old replica set from 2 to 1
+                                              ---+ ---+
+                                              6    6
+```
+
+from kubectl describe command we will get a lengthy result but the one that we are interested is in RollingUpdateStrategy. 25% of 5 pods is about 1 pods, that's why at any given time about we have 1 more pod at works during transitioning.
+
+```txt
+kubectl describe deployment hello-world
+...
+RollingUpdateStrategy:  25% max unavailable, 25% max surge
+...
+```
+
+In summary Kubernetes is giving an illusion that everything is working fine but in the back end it is removing some pods and adding some pods.
+
+### RollingUpdate vs Recreate Update Strategy
+
+| Update Strategy | Explanation |
+| --- | --- |
+| RollingUpdate | Updates pods gradually, one by one |
+| Recreate | Terminates all pods, then creates new ones |
+
+using the same deployment.yaml and tweak it as follow.
+By default the update strategy was RollingUpdate, herewith how we overwite it into Recreate. You may delete all previous deployment.
+
+```txt
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: hello-world
+  name: hello-world-deployment
+  namespace: default
+spec:
+  replicas: 5
+  selector:
+    matchLabels:
+      app: hello-world
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: hello-world
+    spec:
+      containers:
+      - image: gcr.io/google-samples/hello-app:1.0
+        name: hello-world-container
+        ports:
+        - containerPort: 8080
+```
+Using the same steps for RollingUpdate herewith how Recreate looks like
+```txt
+kubectl create -f recreate.yaml
+deployment.apps/hello-world-deployment created
+
+kubectl describe deployment hello-world-deployment
+...
+Events:
+  Type    Reason             Age   From                   Message
+  ----    ------             ----  ----                   -------
+  Normal  ScalingReplicaSet  37s   deployment-controller  Scaled up replica set hello-world-deployment-75554c97db to 5
+
+nano recreate.yaml  # --> change hello-app:1.0 to hello-app:2.0
+
+kubectl apply -f recreate.yaml
+deployment.apps/hello-world-deployment configured
+
+kubectl describe deployment hello-world-deployment
+...
+Events:
+  Type    Reason             Age   From                   Message
+  ----    ------             ----  ----                   -------
+  Normal  ScalingReplicaSet  82s   deployment-controller  Scaled up replica set hello-world-deployment-75554c97db to 5
+  Normal  ScalingReplicaSet  21s   deployment-controller  Scaled down replica set hello-world-deployment-75554c97db to 0 from 5
+  Normal  ScalingReplicaSet  14s   deployment-controller  Scaled up replica set hello-world-deployment-7bd6455957 to 5
+
+```
+### what happen if the deployment is struggling?
+I will pick this example below from deployment-broken.yaml and saved it into broken.yaml In this case we add /change
+- progressDeadlineSeconds: 10
+- make an error from hello-api:2.0 --> hello-ap:2.0<br>
+
+You may need to delete previous deployment to try this one.
+```txt
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+ labels:
+   app: hello-world
+ name: hello-world-deployment
+ namespace: default
+spec:
+ progressDeadlineSeconds: 10
+ replicas: 5
+ selector:
+  matchLabels:
+    app: hello-world
+ template:
+  metadata:
+   labels:
+     app: hello-world
+  spec:
+   containers:
+   - image: gcr.io/google-samples/hello-ap:1.0  
+     name: hello-world-container
+     ports:
+     - containerPort: 8080
+```
+
+As soon as we fix
+- from gcr.io/google-samples/hello-ap:1.0
+- into gcr.io/google-samples/hello-app:1.0
+
+The deployment will gradually running well.
+
+## ROLLOUT HISTORY
+We might cover this already in previous blog, herewith is the example
+
+```txt
+nano broken.yaml  # --> 
+
+kubectl apply -f broken.yaml --record
+Flag --record has been deprecated, --record will be removed in the future
+deployment.apps/hello-world-deployment configured
+
+kubectl rollout history deployment hello-world-deployment
+deployment.apps/hello-world-deployment 
+REVISION  CHANGE-CAUSE
+1         <none>
+2         kubectl apply --filename=broken.yaml --record=true
+```
+
+## DAEMONSET
+A daemonset ensures that a copy of a Pod is running across a set of nodes in Kubernets cluster. DaemonSets are used to deploy system daemons such as log collectors and monitoring agents which typically must run on every node. <br>
+
+Let's try this DaemonSet.yaml below
+```txt
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: hello-world-ds
+spec:
+  selector:
+    matchLabels:
+      app: hello-world-app
+  template:
+    metadata:
+      labels:
+        app: hello-world-app
+    spec:
+      containers:
+        - name: hello-world
+          image: psk8s.azurecr.io/hello-app:1.0
+```
+
+
+
+And herewith is the result
+```txt
+kubectl get daemonsets --namespace default
+NAME             DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   NODE SELECTOR   AGE
+hello-world-ds   1         1         0       1            0           <none>          9s
+```
+
+This daemonset is actually one of the pods, see below
+```txt
+kubectl get pods --show-labels
+NAME                                      READY   STATUS    RESTARTS   AGE     LABELS
+hello-world-deployment-7bd6455957-95n8r   1/1     Running   0          19m     app=hello-world,pod-template-hash=7bd6455957
+hello-world-deployment-7bd6455957-fc89f   1/1     Running   0          19m     app=hello-world,pod-template-hash=7bd6455957
+hello-world-deployment-7bd6455957-s7cfr   1/1     Running   0          19m     app=hello-world,pod-template-hash=7bd6455957
+hello-world-deployment-7bd6455957-sgm8r   1/1     Running   0          19m     app=hello-world,pod-template-hash=7bd6455957
+hello-world-deployment-7bd6455957-vk8s2   1/1     Running   0          19m     app=hello-world,pod-template-hash=7bd6455957
+hello-world-ds-tn6hj                      1/1     Running   0          4m36s   app=hello-world-app,controller-revision-hash=67f975cb86,pod-template-generation=1
+
+kubectl get pods -l controller-revision-hash=67f975cb86
+NAME                   READY   STATUS    RESTARTS   AGE
+hello-world-ds-tn6hj   1/1     Running   0          6m54s
+
+kubectl get pods -l controller-revision-hash=67f975cb86 -o wide
+NAME                   READY   STATUS    RESTARTS   AGE     IP          NODE             NOMINATED NODE   READINESS GATES
+hello-world-ds-tn6hj   1/1     Running   0          7m18s   10.1.2.39   docker-desktop   <none>           <none>
+```
+As we seen before, this daemon set also can ping the other five IP as below
+```txt
+kubectl exec -it hello-world-ds-tn6hj /bin/sh
+/app # ping 10.1.2.39
+PING 10.1.2.39 (10.1.2.39): 56 data bytes
+64 bytes from 10.1.2.39: seq=0 ttl=64 time=0.028 ms
+64 bytes from 10.1.2.39: seq=1 ttl=64 time=0.090 ms
+64 bytes from 10.1.2.39: seq=2 ttl=64 time=0.082 ms
+
+/app # ping 10.1.2.38
+PING 10.1.2.38 (10.1.2.38): 56 data bytes
+64 bytes from 10.1.2.38: seq=0 ttl=64 time=0.377 ms
+64 bytes from 10.1.2.38: seq=1 ttl=64 time=0.121 ms
+64 bytes from 10.1.2.38: seq=2 ttl=64 time=0.177 ms
+```
+
+Last but not least, let's see if the new daemonset.yaml where we add below could catch the selector.<br>
+Last command shows the NODE SELECTOR with node=my-fav-node could catch the pods that we just labeled.
+
+```txt
+kubectl get nodes
+NAME             STATUS   ROLES           AGE   VERSION
+docker-desktop   Ready    control-plane   8h    v1.28.2
+
+kubectl get nodes -o wide
+NAME             STATUS   ROLES           AGE   VERSION   INTERNAL-IP    EXTERNAL-IP   OS-IMAGE         KERNEL-VERSION    CONTAINER-RUNTIME
+docker-desktop   Ready    control-plane   8h    v1.28.2   192.168.65.9   <none>        Docker Desktop   6.5.11-linuxkit   docker://24.0.7
+
+kubectl label node docker-desktop node=my-fav-node
+node/docker-desktop labeled
+
+kubectl get nodes --show-labels
+NAME             STATUS   ROLES           AGE   VERSION   LABELS
+docker-desktop   Ready    control-plane   8h    v1.28.2   beta.kubernetes.io/arch=amd64,beta.kubernetes.io/os=linux,kubernetes.io/arch=amd64,kubernetes.io/hostname=docker-desktop,kubernetes.io/os=linux,node-role.kubernetes.io/control-plane=,node.kubernetes.io/exclude-from-external-load-balancers=,node=my-fav-node
+
+kubectl apply -f daemonset.yaml
+daemonset.apps/hello-world-ds configured
+
+kubectl get ds 
+NAME             DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   NODE SELECTOR      AGE
+hello-world-ds   1         1         1       1            1           node=my-fav-node   32m
+```
