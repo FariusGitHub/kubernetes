@@ -1152,7 +1152,57 @@ RollingUpdateStrategy:  25% max unavailable, 25% max surge
 ...
 ```
 
-In summary Kubernetes is giving an illusion that everything is working fine but in the back end it is removing some pods and adding some pods.
+In summary Kubernetes is giving an illusion that everything is working fine but in the back end it is removing some pods and adding some pods.<br>
+
+Let's see another example of rollingUpdate strategy by makine a mistake as follow.<br>
+Kubernetes by default uses RollingUpdate to avoid sudden change and maintain as many uptime as possible.
+
+```txt
+# step 1: see current pods
+kubectl get pods     
+NAME                                      READY   STATUS    RESTARTS   AGE
+hello-world-deployment-7bd6455957-95n8r   1/1     Running   0          7h33m
+hello-world-deployment-7bd6455957-fc89f   1/1     Running   0          7h33m
+hello-world-deployment-7bd6455957-s7cfr   1/1     Running   0          7h33m
+hello-world-deployment-7bd6455957-sgm8r   1/1     Running   0          7h33m
+hello-world-deployment-7bd6455957-vk8s2   1/1     Running   0          7h33m
+hello-world-ds-rlhjv                      1/1     Running   0          6h47m
+
+# step 2: see current yaml file
+cat deployment.yaml  
+   ...
+     spec:
+      containers:
+      - image: gcr.io/google-samples/hello-app:1.0
+   ...
+
+# step 3: make some silly mistake in yaml file
+nano deployment.yaml 
+
+# step 4: Notice that app:1.0 become ap:1.0 (wrong image, never been found)
+cat deployment.yaml  
+   ...  spec:
+         containers:
+         - image: gcr.io/google-samples/hello-ap:1.0
+   ...
+
+# step 5: update the changes
+kubectl apply -f deployment.yaml
+deployment.apps/hello-world-deployment configured
+
+# --> step 6: show 4  = 5 - 1 (round down from 25% of 5) running hello-world-deployment
+#             and  3 (round up from 25% of 5) ImagePullBackOff hello-world-deployment
+kubectl get pods                           
+NAME                                      READY   STATUS             RESTARTS   AGE
+hello-world-deployment-7bd6455957-fc89f   1/1     Running            0          7h36m
+hello-world-deployment-7bd6455957-s7cfr   1/1     Running            0          7h36m
+hello-world-deployment-7bd6455957-sgm8r   1/1     Running            0          7h36m
+hello-world-deployment-7bd6455957-vk8s2   1/1     Running            0          7h36m
+hello-world-deployment-7fcb559cfb-8plnd   0/1     ImagePullBackOff   0          25s
+hello-world-deployment-7fcb559cfb-hmwvq   0/1     ImagePullBackOff   0          26s
+hello-world-deployment-7fcb559cfb-r4mvz   0/1     ImagePullBackOff   0          26s
+hello-world-ds-rlhjv                      1/1     Running            0          6h50m
+```
 
 ### RollingUpdate vs Recreate Update Strategy
 
@@ -1364,4 +1414,948 @@ daemonset.apps/hello-world-ds configured
 kubectl get ds 
 NAME             DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   NODE SELECTOR      AGE
 hello-world-ds   1         1         1       1            1           node=my-fav-node   32m
+```
+
+## NAMESPACE
+You may find Namespace often in yaml file, if it is not mentioned it will be
+```txt
+namespace: default
+```
+We can also find namespace in kubeconfig (kube/.config) in relation to username, etc
+![](/images/05-image09.png)
+Figure 9: Relation between Namespace and other attributes in Kubernetes
+<br><br>
+
+Namespace must be created first before it was written in yaml file. <br>
+These are the syntax to create and delete namespaces.
+```txt
+kubectl create namespace <namespace-name>
+kubectl delete namespace <namespace-name>
+```
+
+Unlike context, we don't have manually switching default namespace like below.<br>
+```txt
+kubectl config use-context new-context
+Switched to context "new-context".
+```
+
+| Aspect   | Context  | Namespace |
+|----------|----------|-----------|
+| Definition | A context in Kubernetes is a set of access parameters for a cluster, including the cluster's server, authentication credentials, and default namespace. It allows users to switch between different clusters or authentication settings easily. | A namespace in Kubernetes is a virtual cluster within a physical cluster. It provides a way to divide cluster resources between multiple users or teams, ensuring isolation and resource management. |
+| Usage | Contexts are used to manage multiple clusters or authentication settings. They allow users to switch between different clusters or authentication configurations easily without having to reconfigure their command-line tools. | Namespaces are used to divide cluster resources between multiple users or teams. They provide a way to organize and manage resources within a cluster, ensuring isolation and resource management. |
+| Scope | Contexts are used at the cluster level. They define the access parameters for a cluster, including the server URL, authentication credentials, and default namespace. | Namespaces are used at the resource level. They provide a way to organize and manage resources within a cluster, such as pods, services, and deployments. Each resource belongs to a specific namespace. |
+| Example | An example of a context could be a development cluster with its server URL, authentication credentials, and default namespace set. Another context could be a production cluster with its own server URL, authentication credentials, and default namespace. | An example of a namespace could be a "dev" namespace used by a development team to deploy and manage their resources. Another namespace could be a "prod" namespace used by a production team to deploy and manage their resources. |
+| Relationship | Contexts can be associated with one or more namespaces. When switching between contexts, the default namespace can also be changed. | Namespaces are independent of each other and can exist within different contexts. Multiple namespaces can coexist within a single context. |
+
+An easy situation to explain where namespace was needed would be in a situation where an organization does not have luxury to operate multiple cluster. In that case, finance department and HR department for example has to use the same cluster but in different namespaces and to add further restriction who can access the namespace. This is an example how namespace can isolate some of departmental objects as part of primary objective of Kubernetes.
+
+## JOBS, PARALLELISM, CRONJOB
+### Jobs
+There is another command in Kubernetes called jobs which usually run like below
+```txt
+kubectl get jobs
+```
+You may wonder how jobs, deployment and DaemonSet different to each other.
+
+| Feature       | Jobs           | DaemonSet      | Deployments    |
+| ------------- | -------------- | -------------- | -------------- |
+| Purpose       | Run batch tasks| Run on all nodes| Manage app updates|
+| Scaling       | Manual scaling | Auto scaling   | Auto scaling   |
+| Pods          | One or more    | One per node   | Multiple pods  |
+| Completion    | Succeed or fail| Run indefinitely| Rolling updates|
+
+Deployment and DaemonSet are continuously going, For example if a pod was down a new one will replace it instantly. Job may do the same thing but not running continuously. Typically we are using this approach to re-populate the database in an app. <br>
+
+Herewith an example
+```txt
+#STEP 1: adding a new yaml file like below
+nano job.yaml
+
+#STEP 2: example of job yaml file
+cat job.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: hello-world-job
+spec:
+  template:
+    spec:
+      containers:
+      - name: ubuntu
+        image: ubuntu
+        command:
+         - "/bin/bash"
+         - "-c"
+         - "/bin/echo Hello from Pod $(hostname) at $(date)"
+      restartPolicy: Never
+
+#STEP 3: Create a Job
+kubectl create -f job.yaml
+job.batch/hello-world-job created
+
+#STEP 4: Review above newly created job
+kubectl get jobs
+NAME              COMPLETIONS   DURATION   
+hello-world-job   1/1           19s        
+```
+Look at these two important attributes inside a job
+
+```txt
+kubectl describe job hello-world-job
+  ...
+    Parallelism:      1
+    Completions:      1
+  ...
+```
+### Parallelism
+Herewith an example of a parallel jobs in Kubernetes
+![](/images/05-image10.png)
+Figure 10: Kubernetes Parallel Jobs (Batch and Seconds above were generated from Excel)
+<br>
+```txt
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: parallel-job
+spec:
+  completions: 50
+  parallelism: 10
+  template:
+    spec:
+      containers:
+      - name: ubuntu
+        image: ubuntu
+        command:
+         - "/bin/bash"
+         - "-c"
+         - "/bin/echo Hello from Pod $(hostname) at $(date)"
+      restartPolicy: Never
+```
+By default it is a bit tricky to know which pod belong to which batch of the parallel job.
+I identified the first 10 jobs (which is likely starting at the same time) as the first serial jobs at each parallel groups.
+```txt
+devops@msi:~$ kubectl get pods -o custom-columns=NAME:.metadata.name,START_TIME:.status.startTime,COMPLETION_TIME:.status.completionTime
+NAME                START_TIME            COMPLETION_TIME
+parallel-job-5l6d4	2024-01-29T18:08:31Z	<none>
+parallel-job-tjvjr	2024-01-29T18:08:31Z	<none>
+parallel-job-6z8nf	2024-01-29T18:08:32Z	<none>
+parallel-job-9t5c9	2024-01-29T18:08:32Z	<none>
+parallel-job-hpfpp	2024-01-29T18:08:32Z	<none>
+parallel-job-kntfq	2024-01-29T18:08:32Z	<none>
+parallel-job-p6hlh	2024-01-29T18:08:32Z	<none>
+parallel-job-t9k2k	2024-01-29T18:08:32Z	<none>
+parallel-job-xwghn	2024-01-29T18:08:32Z	<none>
+parallel-job-z6npw	2024-01-29T18:08:32Z	<none>
+parallel-job-5btsf	2024-01-29T18:08:48Z	<none>
+parallel-job-bgfcx	2024-01-29T18:08:52Z	<none>
+parallel-job-m254s	2024-01-29T18:08:55Z	<none>
+...
+```
+Then I added manually a new column called batch
+```txt
+NAME                START TIME            BATCH
+parallel-job-5l6d4	2024-01-29T18:08:31Z	1
+parallel-job-tjvjr	2024-01-29T18:08:31Z	2
+parallel-job-6z8nf	2024-01-29T18:08:32Z	3
+parallel-job-9t5c9	2024-01-29T18:08:32Z	4
+parallel-job-hpfpp	2024-01-29T18:08:32Z	5
+parallel-job-kntfq	2024-01-29T18:08:32Z	6
+parallel-job-p6hlh	2024-01-29T18:08:32Z	7
+parallel-job-t9k2k	2024-01-29T18:08:32Z	8
+parallel-job-xwghn	2024-01-29T18:08:32Z	9
+parallel-job-z6npw	2024-01-29T18:08:32Z	10
+parallel-job-5btsf	2024-01-29T18:08:48Z	1
+parallel-job-bgfcx	2024-01-29T18:08:52Z	2
+parallel-job-m254s	2024-01-29T18:08:55Z	3
+parallel-job-4l6ph	2024-01-29T18:08:59Z	4
+parallel-job-5jj4f	2024-01-29T18:09:04Z	5
+parallel-job-9b48q	2024-01-29T18:09:05Z	6
+parallel-job-vt522	2024-01-29T18:09:10Z	7
+parallel-job-pgtk8	2024-01-29T18:09:12Z	8
+parallel-job-vth69	2024-01-29T18:09:12Z	9
+parallel-job-btzhl	2024-01-29T18:09:14Z	10
+parallel-job-jklcf	2024-01-29T18:09:14Z	1
+parallel-job-8mgm8	2024-01-29T18:09:21Z	2
+parallel-job-cdvm4	2024-01-29T18:09:23Z	3
+parallel-job-6n9h9	2024-01-29T18:09:24Z	4
+parallel-job-n5fc8	2024-01-29T18:09:30Z	5
+parallel-job-vtddx	2024-01-29T18:09:33Z	6
+parallel-job-s2vhd	2024-01-29T18:09:36Z	7
+parallel-job-h85fm	2024-01-29T18:09:37Z	8
+parallel-job-9l6sr	2024-01-29T18:09:41Z	9
+parallel-job-zff6x	2024-01-29T18:09:41Z	10
+parallel-job-665pm	2024-01-29T18:09:48Z	1
+parallel-job-8d9v6	2024-01-29T18:09:51Z	2
+parallel-job-6w5wk	2024-01-29T18:09:55Z	3
+parallel-job-jh7wk	2024-01-29T18:09:55Z	4
+parallel-job-2ph22	2024-01-29T18:09:58Z	5
+parallel-job-wcml4	2024-01-29T18:10:00Z	6
+parallel-job-nd6vf	2024-01-29T18:10:04Z	7
+parallel-job-w4mnc	2024-01-29T18:10:08Z	8
+parallel-job-55cxx	2024-01-29T18:10:09Z	9
+parallel-job-84xzq	2024-01-29T18:10:11Z	10
+parallel-job-b2csc	2024-01-29T18:10:12Z	1
+parallel-job-fjhnx	2024-01-29T18:10:14Z	2
+parallel-job-sxtkx	2024-01-29T18:10:19Z	3
+parallel-job-xcmdc	2024-01-29T18:10:22Z	4
+parallel-job-879cg	2024-01-29T18:10:24Z	5
+parallel-job-tqzl2	2024-01-29T18:10:26Z	6
+parallel-job-tcxmj	2024-01-29T18:10:29Z	7
+parallel-job-fkpm8	2024-01-29T18:10:32Z	8
+parallel-job-pwq66	2024-01-29T18:10:34Z	9
+parallel-job-mqsdq	2024-01-29T18:10:36Z	10
+```
+And I added manually the duration column in second as the start time difference between the next tenth row and its own start time. As the last ten rows does not have subsequent 10 values to build the duration, I use the average of previous four as its duration.
+```txt
+NAME                START TIME            BATCH SECONDS
+parallel-job-5l6d4	2024-01-29T18:08:31Z	1	    17
+parallel-job-tjvjr	2024-01-29T18:08:31Z	2	    21
+parallel-job-6z8nf	2024-01-29T18:08:32Z	3	    23
+parallel-job-9t5c9	2024-01-29T18:08:32Z	4	    27
+parallel-job-hpfpp	2024-01-29T18:08:32Z	5	    32
+parallel-job-kntfq	2024-01-29T18:08:32Z	6	    33
+parallel-job-p6hlh	2024-01-29T18:08:32Z	7	    38
+parallel-job-t9k2k	2024-01-29T18:08:32Z	8	    40
+parallel-job-xwghn	2024-01-29T18:08:32Z	9	    40
+parallel-job-z6npw	2024-01-29T18:08:32Z	10	  42
+parallel-job-5btsf	2024-01-29T18:08:48Z	1	    26
+parallel-job-bgfcx	2024-01-29T18:08:52Z	2	    29
+parallel-job-m254s	2024-01-29T18:08:55Z	3	    28
+parallel-job-4l6ph	2024-01-29T18:08:59Z	4	    25
+parallel-job-5jj4f	2024-01-29T18:09:04Z	5	    26
+parallel-job-9b48q	2024-01-29T18:09:05Z	6	    28
+parallel-job-vt522	2024-01-29T18:09:10Z	7	    26
+parallel-job-pgtk8	2024-01-29T18:09:12Z	8	    25
+parallel-job-vth69	2024-01-29T18:09:12Z	9	    29
+parallel-job-btzhl	2024-01-29T18:09:14Z	10	  27
+parallel-job-jklcf	2024-01-29T18:09:14Z	1	    34
+parallel-job-8mgm8	2024-01-29T18:09:21Z	2	    30
+parallel-job-cdvm4	2024-01-29T18:09:23Z	3	    32
+parallel-job-6n9h9	2024-01-29T18:09:24Z	4	    31
+parallel-job-n5fc8	2024-01-29T18:09:30Z	5	    28
+parallel-job-vtddx	2024-01-29T18:09:33Z	6	    27
+parallel-job-s2vhd	2024-01-29T18:09:36Z	7	    28
+parallel-job-h85fm	2024-01-29T18:09:37Z	8	    31
+parallel-job-9l6sr	2024-01-29T18:09:41Z	9	    28
+parallel-job-zff6x	2024-01-29T18:09:41Z	10	  30
+parallel-job-665pm	2024-01-29T18:09:48Z	1	    24
+parallel-job-8d9v6	2024-01-29T18:09:51Z	2	    23
+parallel-job-6w5wk	2024-01-29T18:09:55Z	3	    24
+parallel-job-jh7wk	2024-01-29T18:09:55Z	4	    27
+parallel-job-2ph22	2024-01-29T18:09:58Z	5	    26
+parallel-job-wcml4	2024-01-29T18:10:00Z	6	    26
+parallel-job-nd6vf	2024-01-29T18:10:04Z	7	    25
+parallel-job-w4mnc	2024-01-29T18:10:08Z	8	    24
+parallel-job-55cxx	2024-01-29T18:10:09Z	9	    25
+parallel-job-84xzq	2024-01-29T18:10:11Z	10	  25
+parallel-job-b2csc	2024-01-29T18:10:12Z	1	    25
+parallel-job-fjhnx	2024-01-29T18:10:14Z	2	    25
+parallel-job-sxtkx	2024-01-29T18:10:19Z	3	    26
+parallel-job-xcmdc	2024-01-29T18:10:22Z	4	    27
+parallel-job-879cg	2024-01-29T18:10:24Z	5	    28
+parallel-job-tqzl2	2024-01-29T18:10:26Z	6	    28
+parallel-job-tcxmj	2024-01-29T18:10:29Z	7	    29
+parallel-job-fkpm8	2024-01-29T18:10:32Z	8	    30
+parallel-job-pwq66	2024-01-29T18:10:34Z	9	    30
+parallel-job-mqsdq	2024-01-29T18:10:36Z	10	  31
+```
+By having these additional columns (preferably built in Excel) we can then build a schematic above.
+
+### Cronjob
+A cronjob is a time-based job scheduler in Unix-like operating systems. It allows users to schedule and automate the execution of commands or scripts at specified intervals or specific times. Cronjobs are commonly used for tasks such as system maintenance, backups, and running periodic scripts or programs. They are configured using the cron daemon, which reads a crontab (cron table) file that contains the schedule and commands for each job.
+
+Let's tweak job.yaml into cronjob.yaml like below by adding/replacing couple lines
+- kind: CronJob
+- schedule: "*/1 * * * *"
+```txt
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: hello-world-job
+spec:
+  schedule: "*/1 * * * *"
+  jobTemplate:
+    spec:
+      containers:
+      - name: ubuntu
+        image: ubuntu
+        command:
+         - "/bin/bash"
+         - "-c"
+         - "/bin/echo Hello from Pod $(hostname) at $(date)"
+      restartPolicy: Never
+```
+The expression "*/1 * * * *" [means](https://crontab.guru/#*/1_*_*_*_*) the job will be run at every minute
+
+[Herewith](https://www.netiq.com/documentation/cloud-manager-2-5/ncm-reference/data/bexyssf.html) is the good reference to understand cron syntax, such as below
+|Cron Expression 		|Example Description
+|----				|----
+|0 0 12 * * ?			|Fire at 12:00 p.m. (noon) every day
+|0 15 10 ? * *			|Fire at 10:15 a.m. every day
+|0 15 10 * * ?			|Fire at 10:15 a.m. every day
+|0 15 10 * * ? *		|Fire at 10:15 a.m. every day
+|0 15 10 * * ? 2012		|Fire at 10:15 a.m. every day during the year 2012
+|0 * 14 * * ?			|Fire every minute starting at 2:00 p.m. and ending at 2:59.p.m., every day
+|0 0/5 14 * * ?			|Fire every five minutes starting at 2:00 p.m. and ending at 2:55 p.m., every day
+|0 0/5 14,18 * * ?		|Fire every five minutes starting at 2:00 p.m. and ending at 2:55 p.m., and fire every five minutes starting at 6:00 p.m. and ending at 6:55 p.m., every day
+|0 0-5 14 * * ?			|Fire every minute starting at 2:00 p.m. and ending at 2:05.p.m., every day
+|0 10,44 14 ? 3 WED		|Fire at 2:10 p.m. and at 2:44 p.m. every Wednesday in the month of March
+|0 15 10 ? * MON-FRI		|Fire at 10:15 a.m. every Monday, Tuesday, Wednesday, Thursday and Friday
+|0 15 10 15 * ?			|Fire at 10:15 a.m. on the 15th day of every month
+|0 15 10 15 * ?			|Fire at 10:15 a.m. on the last day of every month
+|0 15 10 ? * 6L			|Fire at 10:15 a.m. on the last Friday of every month
+|0 15 10 ? * 6L 2011-2014	|Fire at 10:15 a.m. on every last Friday of every month during the years 2011, 20012, 2014, and 2014
+|0 15 10 ? * 6#3		|Fire at 10:15 a.m. on the third Friday of every month
+|0 0 12 1/5 * ?			|Fire at 12:00 p.m. (noon) every five days every month, starting on the first day of the month
+|0 11 11 11 11 ?		|Fire every November 11th at 11:11 a.m.
+
+Lets's see below example
+
+```txt
+# STEP1: CREATE CRONJOB LIKE BELOW
+nano cronjob.yaml
+
+# STEP2: REVIEW THE CODE
+cat cronjob.yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: hello-world-cronjob
+spec:
+  schedule: "*/1 * * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+          - name: hello-world
+            image: ubuntu
+            command: ["echo", "hello world"]
+
+# STEP 3: CREATE CRONJOB
+kubectl create -f cronjob.yaml
+cronjob.batch/hello-world-cronjob created
+
+# STEP 4: REVIEW EVERY MINUTE PODS, by default Kubernetes will only show the last three
+kubectl get pods
+NAME                                 READY   STATUS      RESTARTS   AGE
+hello-world-cronjob-28442703-6jnjc   0/1     Completed   0          2m37s
+hello-world-cronjob-28442704-fzz4l   0/1     Completed   0          97s
+hello-world-cronjob-28442705-7hpfq   0/1     Completed   0          37s
+hello-world-job-z8fwm                0/1     Completed   0          16m
+```
+
+## TAINTS AND SCHEDULING
+In K8S, when the Deployment like below launched, normally control panel or master is tainted and none of the pods would be on master / control-node. <br>
+In my case, the kubernetes cluster with K3S or Docker Kubernetes cluster was not tainted.
+In such cases, master nodes can accept pods from deployment.
+
+```txt
+STEP1: create and review deployment.yaml
+nano deployment.yaml
+cat deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hello-world
+spec:
+  replicas: 10
+  selector:
+    matchLabels:
+      app: hello-world
+  template:
+    metadata:
+      labels:
+        app: hello-world
+    spec:
+      containers:
+      - name: hello-world
+        image: psk8s.azurecr.io/hello-app:1.0
+        ports:
+        - containerPort: 8080
+
+STEP2: launch deployment
+kubectl create -f deployment.yaml
+
+STEP 3: See that NODE column has 50% master and 50% worker
+kubectl get pods -o wide
+NAME                           READY   STATUS              RESTARTS   AGE   IP       NODE     NOMINATED NODE   READINESS GATES
+hello-world-5f64785679-bwrtw   0/1     ContainerCreating   0          12s   <none>   worker   <none>           <none>
+hello-world-5f64785679-vknwv   0/1     ContainerCreating   0          12s   <none>   master   <none>           <none>
+hello-world-5f64785679-hk7cz   0/1     ContainerCreating   0          12s   <none>   worker   <none>           <none>
+hello-world-5f64785679-jqg66   0/1     ContainerCreating   0          12s   <none>   master   <none>           <none>
+hello-world-5f64785679-86vln   0/1     ContainerCreating   0          12s   <none>   master   <none>           <none>
+hello-world-5f64785679-q7gxv   0/1     ContainerCreating   0          12s   <none>   worker   <none>           <none>
+hello-world-5f64785679-wxjq7   0/1     ContainerCreating   0          12s   <none>   master   <none>           <none>
+hello-world-5f64785679-dfn2j   0/1     ContainerCreating   0          12s   <none>   master   <none>           <none>
+hello-world-5f64785679-gnnzd   0/1     ContainerCreating   0          12s   <none>   worker   <none>           <none>
+hello-world-5f64785679-tf69j   0/1     ContainerCreating   0          12s   <none>   worker   <none>           <none>
+
+STEP 4: In this case we only have one worker and one master
+kubectl get nodes
+NAME     STATUS   ROLES                  AGE    VERSION
+master   Ready    control-plane,master   6d2h   v1.28.5+k3s1
+worker   Ready    <none>                 6d2h   v1.28.5+k3s1
+
+```
+
+These are the annotations and taints from K3S. 
+
+```txt
+# ANNOTATIONS AND TAINTS FROM K3S
+kubectl describe nodes master
+Name:               master
+Roles:              control-plane,master
+Labels:             beta.kubernetes.io/arch=amd64
+                    beta.kubernetes.io/instance-type=k3s
+                    beta.kubernetes.io/os=linux
+                    kubernetes.io/arch=amd64
+                    kubernetes.io/hostname=master
+                    kubernetes.io/os=linux
+                    node-role.kubernetes.io/control-plane=true
+                    node-role.kubernetes.io/master=true
+                    node.kubernetes.io/instance-type=k3s
+Annotations:        alpha.kubernetes.io/provided-node-ip: 10.73.136.115
+                    flannel.alpha.coreos.com/backend-data: {"VNI":1,"VtepMAC":"32:f3:9e:5f:0e:68"}
+                    flannel.alpha.coreos.com/backend-type: vxlan
+                    flannel.alpha.coreos.com/kube-subnet-manager: true
+                    flannel.alpha.coreos.com/public-ip: 10.73.136.115
+                    k3s.io/hostname: master
+                    k3s.io/internal-ip: 10.73.136.115
+                    k3s.io/node-args: ["server"]
+                    k3s.io/node-config-hash: 4X6FFBYGNZCCKC4WZILLGNG5RGJQDDYNTTQWYJSFA474RBARXQ4A====
+                    k3s.io/node-env: {"K3S_DATA_DIR":"/var/lib/rancher/k3s/data/28f7e87eba734b7f7731dc900e2c84e0e98ce869f3dcf57f65dc7bbb80e12e56"}
+                    node.alpha.kubernetes.io/ttl: 0
+                    volumes.kubernetes.io/controller-managed-attach-detach: true
+CreationTimestamp:  Tue, 23 Jan 2024 13:54:40 -0500
+Taints:             <none>
+```
+and these are the annotations and taints from Docker's K8S.
+
+```txt
+# ANNOTATIONS AND TAINTS FROM Docker's K8S
+kubectl describe node docker-desktop
+Name:               docker-desktop
+Roles:              control-plane
+Labels:             beta.kubernetes.io/arch=amd64
+                    beta.kubernetes.io/os=linux
+                    kubernetes.io/arch=amd64
+                    kubernetes.io/hostname=docker-desktop
+                    kubernetes.io/os=linux
+                    node=my-fav-node
+                    node-role.kubernetes.io/control-plane=
+                    node.kubernetes.io/exclude-from-external-load-balancers=
+Annotations:        kubeadm.alpha.kubernetes.io/cri-socket: unix:///var/run/cri-dockerd.sock
+                    node.alpha.kubernetes.io/ttl: 0
+                    volumes.kubernetes.io/controller-managed-attach-detach: true
+                    CreationTimestamp:  Sun, 28 Jan 2024 17:40:47 -0500
+Taints:             <none>
+```
+
+If you see your taints like
+```txt
+Taints: node.role.kubernetes.io/control-plane:NoSchedule
+```
+So it is likely no pods will be assigned to control-plane.
+
+
+<br><br><br>
+
+## CPU Request
+Take a look at below request.yaml which looks almost like deployment.yaml.<br>
+Over here, we will introduce cpu request like below.
+
+```txt
+STEP1 : add yaml file
+nano request.yaml
+
+STEP2 : review yaml file
+cat request.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hello-world-requests
+  namespace: default
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: hello-world-requests
+  template:
+    metadata:
+      labels:
+        app: hello-world-requests
+    spec:
+      containers:
+      - name: hello-world
+        image: psk8s.azurecr.io/hello-app:1.0
+        resources:
+          requests:
+            cpu: "1"
+        ports:
+        - containerPort: 8080
+
+STEP3 : launch deployment
+kubectl create -f request.yaml
+deployment.apps/hello-world-requests created
+```
+<br>
+
+### CPU Request - 1st Scenario : 3 replicas, CPU Request = 1 <br>
+Take a look of STEP 4 and STEP 5 for replicas = 3, CPU: "1" at request.yaml
+```txt
+STEP4 : review newly created pods
+kubectl get pods
+NAME                                    READY   STATUS    RESTARTS   AGE
+hello-world-requests-59776bd988-ktm5t   1/1     Running   0          29s
+hello-world-requests-59776bd988-lgj6v   1/1     Running   0          29s
+hello-world-requests-59776bd988-trb8l   1/1     Running   0          29s
+```
+Also take a look at the output of kubectl describe command below
+```txt
+STEP 5: Review Nodes
+kubectl describe node docker-desktop
+  ...
+  Non-terminated Pods:          (12 in total)
+    ...see the output table with 12 rows below
+  Allocated resources:
+    (Total limits may be over 100 percent, i.e., overcommitted.)
+    ...see the output table with 3 rows below right after
+  ...
+```
+
+Non-terminated Pods section (from kubectl describe node docker-desktop) 
+|Namespace    |Name                                    |CPU Requests  |CPU Limits  |Memory Requests  |Memory Limits  |Age
+|---------    |----                                    |------------  |----------  |---------------  |-------------  |---
+| default     |hello-world-requests-59776bd988-ktm5t   |1 (12%)       |0 (0%)      |0 (0%)           |0 (0%)         |99s|
+| default     |hello-world-requests-59776bd988-lgj6v   |1 (12%)       |0 (0%)      |0 (0%)           |0 (0%)         |99s|
+| default     |hello-world-requests-59776bd988-trb8l   |1 (12%)       |0 (0%)      |0 (0%)           |0 (0%)         |99s|
+| kube-system |coredns-5dd5756b68-gl66r                |100m (1%)     |0 (0%)      |70Mi (1%)        |170Mi (4%)     |26h|
+| kube-system |coredns-5dd5756b68-p75fr                |100m (1%)     |0 (0%)      |70Mi (1%)        |170Mi (4%)     |26h|
+| kube-system |etcd-docker-desktop                     |100m (1%)     |0 (0%)      |100Mi (2%)       |0 (0%)         |26h|
+| kube-system |kube-apiserver-docker-desktop           |250m (3%)     |0 (0%)      |0 (0%)           |0 (0%)         |26h|
+| kube-system |kube-controller-manager-docker-desktop  |200m (2%)     |0 (0%)      |0 (0%)           |0 (0%)         |26h|
+| kube-system |kube-proxy-4cr8h                        |0 (0%)        |0 (0%)      |0 (0%)           |0 (0%)         |26h|
+| kube-system |kube-scheduler-docker-desktop           |100m (1%)     |0 (0%)      |0 (0%)           |0 (0%)         |26h|
+| kube-system |storage-provisioner                     |0 (0%)        |0 (0%)      |0 (0%)           |0 (0%)         |26h|
+| kube-system |vpnkit-controller                       |0 (0%)        |0 (0%)      |0 (0%)           |0 (0%)         |26h|
+<br>
+
+Allocated resources section (from ubectl describe node docker-desktop)
+
+| Resource           |Requests     |Limits     |
+| --------           |--------     |------     |
+| cpu                |3850m (48%)  |0 (0%)     |
+| memory             |240Mi (6%)   |340Mi (9%) |
+| ephemeral-storage  |0 (0%)       |0 (0%)     |
+
+<br>
+Let's now try to increase the replicas inside the yaml file, while maintaining cpu request 1.
+<br>
+
+### CPU Request - 2nd Scenario : 10 replicas, CPU Request = 1 <br>
+Herewith STEP4 & STEP 5 for replicas=10 and CPU: "1" at request.yaml --> 7 running, 3 pending
+```txt
+STEP4 : review newly created pods
+kubectl get pods
+NAME                                    READY   STATUS    RESTARTS   AGE
+hello-world-requests-59776bd988-9bfrs   1/1     Running   0          9m23s
+hello-world-requests-59776bd988-cd7rs   0/1     Pending   0          9m23s
+hello-world-requests-59776bd988-gnznp   1/1     Running   0          9m23s
+hello-world-requests-59776bd988-h8nnh   1/1     Running   0          9m23s
+hello-world-requests-59776bd988-ktm5t   1/1     Running   0          44m
+hello-world-requests-59776bd988-lgj6v   1/1     Running   0          44m
+hello-world-requests-59776bd988-trb8l   1/1     Running   0          44m
+hello-world-requests-59776bd988-wfnd5   0/1     Pending   0          9m23s
+hello-world-requests-59776bd988-z5pqx   1/1     Running   0          9m23s
+hello-world-requests-59776bd988-znh89   0/1     Pending   0          9m23s
+```
+Also take a look at the output of kubectl describe command below
+```txt
+STEP 5: Review Nodes
+kubectl describe node docker-desktop
+  ...
+  Non-terminated Pods:          (16 in total)
+    ...see the output table with 16 rows below
+  Allocated resources:
+    (Total limits may be over 100 percent, i.e., overcommitted.)
+    ...see the output table with 3 rows below right after
+  ...
+```
+Non-terminated Pods section (from kubectl describe node docker-desktop) 
+| Namespace    |Name                                      |CPU Requests  |CPU Limits  |Memory Requests  |Memory Limits  |Age
+| ---------    |----                                      |------------  |----------  |---------------  |-------------  |---
+| default      |hello-world-requests-59776bd988-9bfrs     |1 (12%)       |0 (0%)      |0 (0%)           |0 (0%)         |94s
+| default      |hello-world-requests-59776bd988-gnznp     |1 (12%)       |0 (0%)      |0 (0%)           |0 (0%)         |94s
+| default      |hello-world-requests-59776bd988-h8nnh     |1 (12%)       |0 (0%)      |0 (0%)           |0 (0%)         |94s
+| default      |hello-world-requests-59776bd988-ktm5t     |1 (12%)       |0 (0%)      |0 (0%)           |0 (0%)         |36m
+| default      |hello-world-requests-59776bd988-lgj6v     |1 (12%)       |0 (0%)      |0 (0%)           |0 (0%)         |36m
+| default      |hello-world-requests-59776bd988-trb8l     |1 (12%)       |0 (0%)      |0 (0%)           |0 (0%)         |36m
+| default      |hello-world-requests-59776bd988-z5pqx     |1 (12%)       |0 (0%)      |0 (0%)           |0 (0%)         |94s
+| kube-system  |coredns-5dd5756b68-gl66r                  |100m (1%)     |0 (0%)      |70Mi (1%)        |170Mi (4%)     |27h
+| kube-system  |coredns-5dd5756b68-p75fr                  |100m (1%)     |0 (0%)      |70Mi (1%)        |170Mi (4%)     |27h
+| kube-system  |etcd-docker-desktop                       |100m (1%)     |0 (0%)      |100Mi (2%)       |0 (0%)         |27h
+| kube-system  |kube-apiserver-docker-desktop             |250m (3%)     |0 (0%)      |0 (0%)           |0 (0%)         |27h
+| kube-system  |kube-controller-manager-docker-desktop    |200m (2%)     |0 (0%)      |0 (0%)           |0 (0%)         |27h
+| kube-system  |kube-proxy-4cr8h                          |0 (0%)        |0 (0%)      |0 (0%)           |0 (0%)         |27h
+| kube-system  |kube-scheduler-docker-desktop             |100m (1%)     |0 (0%)      |0 (0%)           |0 (0%)         |27h
+| kube-system  |storage-provisioner                       |0 (0%)        |0 (0%)      |0 (0%)           |0 (0%)         |27h
+| kube-system  |vpnkit-controller                         |0 (0%)        |0 (0%)      |0 (0%)           |0 (0%)         |27h
+<br>
+
+Allocated resources section (from ubectl describe node docker-desktop)
+|  Resource           |Requests     |Limits
+|  --------           |--------     |------
+|  cpu                |7850m (98%)  | 0 (0%)
+|  memory             |240Mi (6%)   |340Mi (9%)
+|  ephemeral-storage  |0 (0%)       |0 (0%)
+<br>
+
+### CPU Request - 3rd Scenario : 7 replicas, CPU Request = 1 <br>
+Herewith STEP4 & STEP 5 for replicas=7 and CPU: "1" at request.yaml --> 7 running, 0 pending
+<br>
+```txt
+STEP4 : review newly created pods
+kubectl get pods
+NAME                                    READY   STATUS    RESTARTS   AGE
+hello-world-requests-59776bd988-9bfrs   1/1     Running   0          24m
+hello-world-requests-59776bd988-gnznp   1/1     Running   0          24m
+hello-world-requests-59776bd988-h8nnh   1/1     Running   0          24m
+hello-world-requests-59776bd988-ktm5t   1/1     Running   0          59m
+hello-world-requests-59776bd988-lgj6v   1/1     Running   0          59m
+hello-world-requests-59776bd988-trb8l   1/1     Running   0          59m
+hello-world-requests-59776bd988-z5pqx   1/1     Running   0          24m
+```
+and STEP 5 here would be similar to STEP 5 in scenario 2. 
+
+### CPU Request - 4rd Scenario : 10 replicas, CPU Request = 0.25 <br>
+Herewith STEP4 & STEP 5 for replicas=10 and CPU: "0.25" at request.yaml --> 10 running, 0 pending
+```txt
+STEP4 : review newly created pods
+kubectl get pods
+NAME                                   READY   STATUS    RESTARTS   AGE
+hello-world-requests-d9955fdd9-7sfmc   1/1     Running   0          6m5s
+hello-world-requests-d9955fdd9-8gt24   1/1     Running   0          6m6s
+hello-world-requests-d9955fdd9-ftzk9   1/1     Running   0          6m19s
+hello-world-requests-d9955fdd9-h6p2j   1/1     Running   0          6m5s
+hello-world-requests-d9955fdd9-n7d4f   1/1     Running   0          6m21s
+hello-world-requests-d9955fdd9-sjrs7   1/1     Running   0          6m20s
+hello-world-requests-d9955fdd9-t5ncb   1/1     Running   0          6m21s
+hello-world-requests-d9955fdd9-v2hwd   1/1     Running   0          6m1s
+hello-world-requests-d9955fdd9-wcxxg   1/1     Running   0          6m3s
+hello-world-requests-d9955fdd9-xq7xh   1/1     Running   0          6m21s
+```
+and finally take a look at the output of kubectl describe command below
+```txt
+STEP 5: Review Nodes
+kubectl describe node docker-desktop
+  ...
+  Non-terminated Pods:          (19 in total)
+    ...see the output table with 19 rows below
+  Allocated resources:
+    (Total limits may be over 100 percent, i.e., overcommitted.)
+    ...see the output table with 3 rows below right after
+  ...
+```
+Non-terminated Pods section (from kubectl describe node docker-desktop) 
+
+|  Namespace    |Name                                      |CPU Requests  |CPU Limits  |Memory Requests  |Memory Limits  |Age
+|  ---------    |----                                      |------------  |----------  |---------------  |-------------  |---
+|  default      |hello-world-requests-d9955fdd9-7sfmc      |250m (3%)     |0 (0%)      |0 (0%)           |0 (0%)         |8m37s
+|  default      |hello-world-requests-d9955fdd9-8gt24      |250m (3%)     |0 (0%)      |0 (0%)           |0 (0%)         |8m38s
+|  default      |hello-world-requests-d9955fdd9-ftzk9      |250m (3%)     |0 (0%)      |0 (0%)           |0 (0%)         |8m51s
+|  default      |hello-world-requests-d9955fdd9-h6p2j      |250m (3%)     |0 (0%)      |0 (0%)           |0 (0%)         |8m37s
+|  default      |hello-world-requests-d9955fdd9-n7d4f      |250m (3%)     |0 (0%)      |0 (0%)           |0 (0%)         |8m53s
+|  default      |hello-world-requests-d9955fdd9-sjrs7      |250m (3%)     |0 (0%)      |0 (0%)           |0 (0%)         |8m52s
+|  default      |hello-world-requests-d9955fdd9-t5ncb      |250m (3%)     |0 (0%)      |0 (0%)           |0 (0%)         |8m53s
+|  default      |hello-world-requests-d9955fdd9-v2hwd      |250m (3%)     |0 (0%)      |0 (0%)           |0 (0%)         |8m33s
+|  default      |hello-world-requests-d9955fdd9-wcxxg      |250m (3%)     |0 (0%)      |0 (0%)           |0 (0%)         |8m35s
+|  default      |hello-world-requests-d9955fdd9-xq7xh      |250m (3%)     |0 (0%)      |0 (0%)           |0 (0%)         |8m53s
+|  kube-system  |coredns-5dd5756b68-gl66r                  |100m (1%)     |0 (0%)      |70Mi (1%)        |170Mi (4%)     |27h
+|  kube-system  |coredns-5dd5756b68-p75fr                  |100m (1%)     |0 (0%)      |70Mi (1%)        |170Mi (4%)     |27h
+|  kube-system  |etcd-docker-desktop                       |100m (1%)     |0 (0%)      |100Mi (2%)       |0 (0%)         |27h
+|  kube-system  |kube-apiserver-docker-desktop             |250m (3%)     |0 (0%)      |0 (0%)           |0 (0%)         |27h
+|  kube-system  |kube-controller-manager-docker-desktop    |200m (2%)     |0 (0%)      |0 (0%)           |0 (0%)         |27h
+|  kube-system  |kube-proxy-4cr8h                          |0 (0%)        |0 (0%)      |0 (0%)           |0 (0%)         |27h
+|  kube-system  |kube-scheduler-docker-desktop             |100m (1%)     |0 (0%)      |0 (0%)           |0 (0%)         |27h
+|  kube-system  |storage-provisioner                       |0 (0%)        |0 (0%)      |0 (0%)           |0 (0%)         |27h
+|  kube-system  |vpnkit-controller                         |0 (0%)        |0 (0%)      |0 (0%)           |0 (0%)         |27h
+<br>
+
+Allocated resources section (from ubectl describe node docker-desktop)
+|  Resource           |Requests     |Limits
+|  --------           |--------     |------
+|  cpu                |3350m (41%)  |0 (0%)
+|  memory             |240Mi (6%)   |340Mi (9%)
+|  ephemeral-storage  |0 (0%)       |0 (0%)
+<br><br>
+
+![](/images/05-image11.png)
+Figure 11: All the 4 scenarios put together in term of CPU Request, Number of Replicas
+
+## NODE SELECTOR
+Let's see below situation. 
+
+```txt
+
+# INITIALLY WE MISTAKENLY SELECT A WRONG nodeSelector
+cat deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hello-world
+  namespace: default
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: hello-world
+  template:
+    metadata:
+      labels:
+        app: hello-world
+    spec:
+      containers:
+      - name: hello-world
+        image: psk8s.azurecr.io/hello-app:2.0
+        ports:
+        - containerPort: 8080
+      nodeSelector:
+        node: my-fav-node2
+
+# WHEN WE DEPLOY IT AND CHECKING THE PODS --> PODS PENDING
+kubectl apply -f deployment.yaml
+  deployment.apps/hello-world created
+
+kubectl get pods
+  NAME                           READY   STATUS    RESTARTS   AGE
+  hello-world-5c6b94bf6b-cd5sm   0/1     Pending   0          24s
+  hello-world-5c6b94bf6b-krf9l   0/1     Pending   0          24s
+  hello-world-5c6b94bf6b-tktrv   0/1     Pending   0          24s
+
+# AFTER WE EDIT THE YAML FILE CORRECTLY
+nano deployment.yaml
+cat deployment.yaml
+  apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: hello-world
+    namespace: default
+  spec:
+    replicas: 3
+    selector:
+      matchLabels:
+        app: hello-world
+    template:
+      metadata:
+        labels:
+          app: hello-world
+      spec:
+        containers:
+        - name: hello-world
+          image: psk8s.azurecr.io/hello-app:2.0
+          ports:
+          - containerPort: 8080
+        nodeSelector:
+          node: my-fav-node
+
+# NODE SELECTOR IS NOT POINTING TO THE RIGHT LABEL --> PODS RUNNING
+kubectl apply -f deployment.yaml
+  deployment.apps/hello-world configured
+kubectl get pods
+  NAME                           READY   STATUS    RESTARTS   AGE
+  hello-world-677cccb5d4-ff5n6   1/1     Running   0          17s
+  hello-world-677cccb5d4-kr7x2   1/1     Running   0          6s
+  hello-world-677cccb5d4-qnrd5   1/1     Running   0          11s
+```
+
+Node selector is used in Kubernetes to specify the nodes on which a particular pod should be scheduled. It allows users to control the placement of pods on specific nodes based on various criteria such as hardware capabilities, network locality, or any other custom labels assigned to nodes.
+
+For example if one bank is about to migrate their machine learning models to the cloud, some models are more expensive than the others. These stronger machines can be labeled to land on specific nodes.
+
+## AFFINITY FOR POD PLACEMENT
+Two complex checks/boolean logic predicates, used in Affinity and Anti-Affinity scheme are
+- requiredDuringSchedulingIgnoreDuringExecution and
+- preferredDuringSchedulingIgnoreDuringExecution
+
+Let's use deployment.yaml with few changes below
+```txt
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hello-world
+  namespace: default
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: main
+  template:
+    metadata:
+      labels:
+        app: main
+    spec:
+      containers:
+      - name: hello-world
+        image: psk8s.azurecr.io/hello-app:2.0
+        ports:
+        - containerPort: 8080
+```
+We don't have multiple workers here, so could not show any round robin in node column
+```txt
+evops@msi:~$ kubectl get pods -o wide
+NAME                           READY   STATUS    RESTARTS   AGE    IP           NODE             NOMINATED NODE   READINESS GATES
+caching-6f7b7dcccf-4wmhb       1/1     Running   0          108s   10.1.2.252   docker-desktop   <none>           <none>
+hello-world-645c45876d-64fb7   1/1     Running   0          18m    10.1.2.248   docker-desktop   <none>           <none>
+hello-world-645c45876d-l5g7c   1/1     Running   0          18m    10.1.2.250   docker-desktop   <none>           <none>
+hello-world-645c45876d-mj8tj   1/1     Running   0          18m    10.1.2.249   docker-desktop   <none>           <none>
+
+```
+
+then also take a look at below caching.yaml
+
+```txt
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: caching
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cache
+  template:
+    metadata:
+      labels:
+        app: cache
+    spec:
+      containers:
+      - name: hello-world-cache
+        image: psk8s.azurecr.io/hello-app:1.0
+        ports:
+        - containerPort: 8080
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            -  matchExpressions:
+               - key: node
+                 operator: In
+                 values:
+                 - my-fav-node
+```
+
+Says we changed my-fav-node into my-fav-node2, let's how affinity works.
+
+```txt
+#STEP 1 : WE INTENTIONALLY PUT A WRONG LABEL IN AFFINITY ATTRIBUTE
+cat caching.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: caching
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cache
+  template:
+    metadata:
+      labels:
+        app: cache
+    spec:
+      containers:
+      - name: hello-world-cache
+        image: psk8s.azurecr.io/hello-app:1.0
+        ports:
+        - containerPort: 8080
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            -  matchExpressions:
+               - key: node
+                 operator: In
+                 values:
+                 - my-fav-node2
+
+#STEP 2: WE COULD CREATE IT BUT..
+kubectl create -f caching.yaml
+deployment.apps/caching created
+
+#STEP 3: THE POD WILL BE PENDING 
+kubectl get pods
+NAME                           READY   STATUS    RESTARTS   AGE
+caching-6589594449-ss5fq       0/1     Pending   0          6s
+hello-world-645c45876d-64fb7   1/1     Running   0          34m
+hello-world-645c45876d-l5g7c   1/1     Running   0          34m
+hello-world-645c45876d-mj8tj   1/1     Running   0          34m
+
+#STEP 4: CHANGING BACK THE LABEL, RERUN AND SEE POD IS NOW RUNNING 
+nano caching.yaml
+cat caching.yaml
+  apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: caching
+    namespace: default
+  spec:
+    replicas: 1
+    selector:
+      matchLabels:
+        app: cache
+    template:
+      metadata:
+        labels:
+          app: cache
+      spec:
+        containers:
+        - name: hello-world-cache
+          image: psk8s.azurecr.io/hello-app:1.0
+          ports:
+          - containerPort: 8080
+        affinity:
+          nodeAffinity:
+            requiredDuringSchedulingIgnoredDuringExecution:
+              nodeSelectorTerms:
+              -  matchExpressions:
+                - key: node
+                  operator: In
+                  values:
+                  - my-fav-node
+
+kubectl apply -f caching.yaml
+  deployment.apps/caching configured
+
+kubectl get pods
+NAME                           READY   STATUS    RESTARTS   AGE
+caching-6f7b7dcccf-fjgc8       1/1     Running   0          10s
+hello-world-645c45876d-64fb7   1/1     Running   0          34m
+hello-world-645c45876d-l5g7c   1/1     Running   0          34m
+hello-world-645c45876d-mj8tj   1/1     Running   0          34m
+```
+
+## TAINTS
+In Kubernetes (K8S), taints are a way to mark a node with a specific attribute that affects which pods can be scheduled on that node. Taints are used to indicate that a node has a specific limitation or requirement, such as being reserved for certain types of workloads or having specific hardware capabilities.
+
+When a node is tainted, it means that by default, no pods will be scheduled on that node unless the pod tolerates the taint. Tolerations are set on pods to indicate that they can be scheduled on nodes with specific taints.
+
+Taints and tolerations are useful for scenarios where certain nodes need to be dedicated to specific workloads or have specific requirements. They help ensure that pods are scheduled on appropriate nodes based on their requirements and constraints.
+Taints also available in K3S.
+
+
+```txt
+kubectl get nodes
+NAME     STATUS   ROLES                  AGE     VERSION
+master   Ready    control-plane,master   6d10h   v1.28.5+k3s1
+worker   Ready    <none>                 6d10h   v1.28.5+k3s1
+
+kubectl taint node worker key=MyTaint:NoSchedule
+node/worker tainted
+
+kubectl taint node worker key=MyTaint:NoSchedule-
+node/worker untainted
 ```
