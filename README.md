@@ -2337,8 +2337,237 @@ hello-world-645c45876d-64fb7   1/1     Running   0          34m
 hello-world-645c45876d-l5g7c   1/1     Running   0          34m
 hello-world-645c45876d-mj8tj   1/1     Running   0          34m
 ```
+### TOPOLOGY
+Take a look the other example says with 
+- web-cache-affinity.yaml
+- web-cache-no-need.yaml
+- cache2.yaml
 
-## TAINTS
+as follow
+
+```txt
+cat web-cache-affinity.yaml
+  apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: web-cache-affinity
+    namespace: default
+  spec:
+    replicas: 1
+    selector:
+      matchLabels:
+        app: web-cache-affinity
+    template:
+      metadata:
+        labels:
+          app: web-cache-affinity
+      spec:
+        containers:
+        - name: hello-world-web
+          image: psk8s.azurecr.io/hello-app:2.0
+          ports:
+          - containerPort: 8080
+
+cat web-cache-no-need.yaml
+  apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: web-cache-no-need
+    namespace: default
+  spec:
+    replicas: 1
+    selector:
+      matchLabels:
+        app: web-cache-no-need
+    template:
+      metadata:
+        labels:
+          app: web-cache-no-need
+      spec:
+        containers:
+        - name: hello-world-web
+          image: psk8s.azurecr.io/hello-app:2.0
+          ports:
+          - containerPort: 8080
+
+cat cache2.yaml
+  apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: caching
+    namespace: default
+  spec:
+    replicas: 1
+    selector:
+      matchLabels:
+        app: cache
+    template:
+      metadata:
+        labels:
+          app: cache
+      spec:
+        containers:
+        - name: hello-world-cache
+          image: psk8s.azurecr.io/hello-app:1.0
+          ports:
+          - containerPort: 8080
+        affinity:
+          podAffinity:
+            requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - web-cache-no-need
+              topologyKey: "kubernetes.io/hostname"
+```
+
+The topology line is required for podAffinity because it specifies the key used to match the topology domain of the node where the pods are scheduled. This ensures that the pods are scheduled on nodes that have the specified topology domain.
+
+On the other hand, nodeAffinity does not require the topology line because it does not involve matching the topology domain of the node. NodeAffinity is used to specify rules for scheduling pods based on node labels or other node attributes, without considering the topology domain.
+
+The last two line of cache2.yaml could be either or both
+- web-cache-no-need
+- web-cache-affinity
+
+
+## ANTI-AFFINITY
+As the name suggest, everything will remain the same but one line will be different, see anti.yaml below
+
+```txt
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: web-server
+  template:
+    metadata:
+      labels:
+        app: web-server
+    spec:
+      containers:
+      - name: hello-world-cache
+        image: psk8s.azurecr.io/hello-app:1.0
+        ports:
+        - containerPort: 8080
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - web-server
+            topologyKey: "kubernetes.io/hostname"
+```
+Look at below case when we want to scale anti-affinity. <br>
+By the way, anti-affinitity does not need previous existing pods like affinity example above.
+
+```txt
+#FIRST, TAKE A LOOK ON A YAML FILE FOR ANTI-AFFINITY WHICH ALLOW SCALING
+cat anti2.yaml
+  apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: web-server
+  spec:
+    replicas: 1
+    selector:
+      matchLabels:
+        app: web-server
+    template:
+      metadata:
+        labels:
+          app: web-server
+      spec:
+        containers:
+        - name: hello-world-cache
+          image: psk8s.azurecr.io/hello-app:1.0
+          ports:
+          - containerPort: 8080
+        affinity:
+          podAntiAffinity:
+            preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                  - key: app
+                    operator: In
+                    values:
+                    - web-server
+                topologyKey: "kubernetes.io/hostname"
+
+#SECONDLY, WE CREATE THE DEPLOYMENT
+kubectl create -f anti2.yaml
+  deployment.apps/web-server created
+
+#THIRDLY, WE CAN SEE ALLOW PODS ARE RUNNING
+kubectl scale deployment web-server --replicas=4
+  deployment.apps/web-server scaled
+  devops@msi:~$ kubectl get pods
+  NAME                          READY   STATUS    RESTARTS   AGE
+  web-server-6bfd64d5bf-4zq9z   1/1     Running   0          87s
+  web-server-6bfd64d5bf-jf4bm   1/1     Running   0          30s
+  web-server-6bfd64d5bf-q6jhh   1/1     Running   0          30s
+  web-server-6bfd64d5bf-wwzjl   1/1     Running   0          30s
+
+#NEXT, LET'S DELETE THIS DEPLOYMENT AND RUN THE OLDER ANTI-AFFINITY
+kubectl delete -f anti2.yaml
+  deployment.apps "web-server" deleted
+
+cat anti.yaml
+  apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: web-server
+  spec:
+    replicas: 1
+    selector:
+      matchLabels:
+        app: web-server
+    template:
+      metadata:
+        labels:
+          app: web-server
+      spec:
+        containers:
+        - name: hello-world-cache
+          image: psk8s.azurecr.io/hello-app:1.0
+          ports:
+          - containerPort: 8080
+        affinity:
+          podAntiAffinity:
+            requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - web-server
+              topologyKey: "kubernetes.io/hostname"
+
+# NEXT WE CREATE THE DEPLOYMENT WITH THE SAME NAME
+kubectl scale deployment web-server --replicas=4
+  deployment.apps/web-server scaled
+
+# INTERESTINGLY, IT WON'T WORK. IT SUGGESTS MODIFICATION ABOVE TO SCALE
+kubectl get pods
+  NAME                          READY   STATUS    RESTARTS   AGE
+  web-server-75bd558b87-8sptp   0/1     Pending   0          15s
+  web-server-75bd558b87-mtp4w   0/1     Pending   0          15s
+  web-server-75bd558b87-vh2xv   1/1     Running   0          23s
+  web-server-75bd558b87-whs5x   0/1     Pending   0          15s
+```
+
+## TAINT AND TOLERATION
+### TAINT
 In Kubernetes (K8S), taints are a way to mark a node with a specific attribute that affects which pods can be scheduled on that node. Taints are used to indicate that a node has a specific limitation or requirement, such as being reserved for certain types of workloads or having specific hardware capabilities.
 
 When a node is tainted, it means that by default, no pods will be scheduled on that node unless the pod tolerates the taint. Tolerations are set on pods to indicate that they can be scheduled on nodes with specific taints.
@@ -2349,13 +2578,131 @@ Taints also available in K3S.
 
 ```txt
 kubectl get nodes
-NAME     STATUS   ROLES                  AGE     VERSION
-master   Ready    control-plane,master   6d10h   v1.28.5+k3s1
-worker   Ready    <none>                 6d10h   v1.28.5+k3s1
+  NAME     STATUS   ROLES                  AGE     VERSION
+  master   Ready    control-plane,master   6d10h   v1.28.5+k3s1
+  worker   Ready    <none>                 6d10h   v1.28.5+k3s1
 
 kubectl taint node worker key=MyTaint:NoSchedule
-node/worker tainted
+  node/worker tainted
 
 kubectl taint node worker key=MyTaint:NoSchedule-
-node/worker untainted
+  node/worker untainted
 ```
+
+Same thing we can taint and untaint docker-desktop node like below
+
+```txt
+kubectl taint node docker-desktop key=MyTaint:NoSchedule
+  node/docker-desktop tainted
+
+kubectl create -f deployment.yaml
+  deployment.apps/hello-world created
+
+kubectl get pods
+  NAME                           READY   STATUS    RESTARTS   AGE
+  hello-world-756bb58cbd-m87jb   0/1     Pending   0          18s
+  hello-world-756bb58cbd-ms547   0/1     Pending   0          18s
+  hello-world-756bb58cbd-w9zws   0/1     Pending   0          18s
+
+kubectl taint node docker-desktop key=MyTaint:NoSchedule-
+  node/docker-desktop untainted
+
+kubectl get pods
+  NAME                           READY   STATUS    RESTARTS   AGE
+  hello-world-756bb58cbd-m87jb   1/1     Running   0          60s
+  hello-world-756bb58cbd-ms547   1/1     Running   0          60s
+  hello-world-756bb58cbd-w9zws   1/1     Running   0          60s
+```
+
+According to Merriam-Webster dictionary, Taint is to to contaminate morally. In this case taint discourage the placement of pods in the node until and unless we tolerate it.
+
+### TOLERATION
+Let's recap taint process above by using running toleration.yaml below & K3S
+
+```txt
+#STEP 1: create and review a new yaml file name toleration.yaml as follow
+cat toleration.yaml
+  apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: hello-world
+  spec:
+    replicas: 3
+    selector:
+      matchLabels:
+        app: hello-world
+    template:
+      metadata:
+        labels:
+          app: hello-world
+      spec:
+        containers:
+        - name: hello-world
+          image: psk8s.azurecr.io/hello-app:1.0
+          ports:
+          - containerPort: 8080
+
+#STEP 2: Simply create a deployment where master and worker node not tainted
+kubectl create -f toleration.yaml 
+  deployment.apps/hello-world created
+
+#STEP 3: As you can see master node also part of deployment (ideally not)
+kubectl get pods -o wide
+NAME                           READY   STATUS    RESTARTS   AGE   IP           NODE     NOMINATED NODE   READINESS GATES
+hello-world-5f64785679-xcsbn   1/1     Running   0          7s    10.42.0.36   master   <none>           <none>
+hello-world-5f64785679-krmzb   1/1     Running   0          7s    10.42.1.34   worker   <none>           <none>
+hello-world-5f64785679-ctg78   1/1     Running   0          7s    10.42.1.35   worker   <none>           <none>
+
+#STEP 4: Let's delete this deployment, taint the master and re-deploy again
+kubectl delete -f toleration.yaml
+  deployment.apps "hello-world" deleted
+kubectl taint node master key=MyTaint:NoSchedule
+  node/master tainted
+kubectl create -f toleration.yaml
+  deployment.apps/hello-world created
+kubectl get pods -o wide
+NAME                           READY   STATUS    RESTARTS   AGE   IP           NODE     NOMINATED NODE   READINESS GATES
+hello-world-5f64785679-f99fd   1/1     Running   0          4s    10.42.1.36   worker   <none>           <none>
+hello-world-5f64785679-74rrs   1/1     Running   0          4s    10.42.1.38   worker   <none>           <none>
+hello-world-5f64785679-5n66h   1/1     Running   0          4s    10.42.1.37   worker   <none>           <none>
+```
+Now we will add few lines to toleration.yaml
+
+```
+cat toleration.yaml
+  apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: hello-world
+  spec:
+    replicas: 3
+    selector:
+      matchLabels:
+        app: hello-world
+    template:
+      metadata:
+        labels:
+          app: hello-world
+      spec:
+        containers:
+        - name: hello-world
+          image: psk8s.azurecr.io/hello-app:1.0
+          ports:
+          - containerPort: 8080
+        tolerations:
+        - key: "key"
+          operator: "Equal"
+          value: "MyTaint"
+          effect: "NoSchedule"
+
+kubectl create -f toleration.yaml
+  deployment.apps/hello-world created
+
+kubectl get pods -o wide
+  NAME                           READY   STATUS    RESTARTS   AGE   IP           NODE     NOMINATED NODE   READINESS GATES
+  hello-world-75f87cb94f-q6cps   1/1     Running   0          30s   10.42.0.40   master   <none>           <none>
+  hello-world-75f87cb94f-rh26h   1/1     Running   0          23s   10.42.1.48   worker   <none>           <none>
+  hello-world-75f87cb94f-9cpkv   1/1     Running   0          20s   10.42.0.41   master   <none>           <none>
+```
+
+Master node is actually still tainted. In Kubernetes, a node can still deploy a pod even if it is tainted, as long as the pod has a toleration specified for that particular taint. Taints are used to repel pods from being scheduled on specific nodes, but tolerations allow pods to be scheduled on tainted nodes. By specifying a toleration in the pod's configuration, it can be deployed on a tainted node, overriding the taint effect. <br>
