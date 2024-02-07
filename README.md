@@ -663,11 +663,16 @@ pod/hello-world-pod created
 ```
 
 ## STATIC PODS
-I will not be able to show an exact demo here as I have a super simple kubectl version that does not have /var/lib/kubelet/config.yaml or /etc/kubernetes/manifests folder. But the idea is showing you an untouchable pod if the yaml file was located in staticPod folder. <br>
+Normally we could not see /var/lib/kubelet/config.yaml or /etc/kubernetes/manifests folder from Docker-Desktop kubernetes cluster.
+But there is a way to look at them from inside the docker container below.
 
-If you have the right kubectl version <br>
-/var/lib/kubelet/config.yaml is normally stated <br>
-staticPodPath: /etc/kubernetes/manifests
+```sh
+docker run -it --privileged --pid=host debian nsenter -t 1 -m -u -n -i sh
+```
+
+which I learned from this [link](https://stackoverflow.com/questions/64758012/location-of-kubernetes-config-directory-with-docker-desktop-on-windows) <br>
+
+The files located in /etc/kubernetes/manifests should make the pod  untouchable if the yaml file was located in staticPod folder. <br>
 
 Says you have a yaml file called test.yaml. <br>
 When you do
